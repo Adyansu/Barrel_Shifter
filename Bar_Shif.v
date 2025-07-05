@@ -1,40 +1,62 @@
-module barrel_shifter_8bit
-    (
-	input [7 : 0] in,
-    	input [2 : 0] ctrl,
-    	output [7 : 0] out
-    );
-    wire [7 : 0] x, y;
+// 8-bit Barrel Shifter (Supports Logical Left, Logical Right, Arithmetic Right, and Rotate Right)
+// Control Encoding:
+// ctrl[2:0]: amount to shift (0 to 7)
+// mode[1:0]:
+//   00 = logical left shift
+//   01 = logical right shift
+//   10 = arithmetic right shift
+//   11 = rotate right
 
-    //4 bit shift right
-    mux2x1 ins_17(.in0(in[7]), .in1(1'b0), .sel(ctrl[2]), .out(x[7]));
-    mux2x1 ins_16(.in0(in[6]), .in1(1'b0), .sel(ctrl[2]), .out(x[6]));
-    mux2x1 ins_15(.in0(in[5]), .in1(1'b0), .sel(ctrl[2]), .out(x[5]));
-    mux2x1 ins_14(.in0(in[4]), .in1(1'b0), .sel(ctrl[2]), .out(x[4]));
-    mux2x1 ins_13(.in0(in[3]), .in1(in[7]), .sel(ctrl[2]), .out(x[3]));
-    mux2x1 ins_12(.in0(in[2]), .in1(in[6]), .sel(ctrl[2]), .out(x[2]));
-    mux2x1 ins_11(.in0(in[1]), .in1(in[5]), .sel(ctrl[2]), .out(x[1]));
-    mux2x1 ins_10(.in0(in[0]), .in1(in[4]), .sel(ctrl[2]), .out(x[0]));
+module barrel_shifter_all (
+    input  [7:0] in,
+    input  [2:0] ctrl,
+    input  [1:0] mode,
+    output [7:0] out
+);
+    wire [7:0] stage1, stage2, stage3;
+    wire [7:0] s;
 
-    //2 bit shift right
-    mux2x1  ins_27(.in0(x[7]), .in1(1'b0), .sel(ctrl[1]), .out(y[7]));
-    mux2x1  ins_26(.in0(x[6]), .in1(1'b0), .sel(ctrl[1]), .out(y[6]));
-    mux2x1  ins_25(.in0(x[5]), .in1(x[7]), .sel(ctrl[1]), .out(y[5]));
-    mux2x1  ins_24(.in0(x[4]), .in1(x[6]), .sel(ctrl[1]), .out(y[4]));
-    mux2x1  ins_23(.in0(x[3]), .in1(x[5]), .sel(ctrl[1]), .out(y[3]));
-    mux2x1  ins_22(.in0(x[2]), .in1(x[4]), .sel(ctrl[1]), .out(y[2]));
-    mux2x1  ins_21(.in0(x[1]), .in1(x[3]), .sel(ctrl[1]), .out(y[1]));
-    mux2x1  ins_20(.in0(x[0]), .in1(x[2]), .sel(ctrl[1]), .out(y[0]));
+    // Stage 1: Shift by 4 if ctrl[2] is set
+    genvar i;
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : SHIFT4
+            wire in0 = in[i];
+            wire in1;
+            assign in1 = (mode == 2'b00) ? ((i+4 < 8) ? in[i+4] : 1'b0) :
+                         (mode == 2'b01) ? ((i >= 4) ? in[i-4] : 1'b0) :
+                         (mode == 2'b10) ? ((i >= 4) ? in[i-4] : in[7]) :
+                         (mode == 2'b11) ? in[(i-4+8)%8] : 1'b0;
+            assign stage1[i] = ctrl[2] ? in1 : in0;
+        end
+    endgenerate
 
-    //1 bit shift right
-    mux2x1  ins_07(.in0(y[7]), .in1(1'b0), .sel(ctrl[0]), .out(out[7]));
-    mux2x1  ins_06(.in0(y[6]), .in1(y[7]), .sel(ctrl[0]), .out(out[6]));
-    mux2x1  ins_05(.in0(y[5]), .in1(y[6]), .sel(ctrl[0]), .out(out[5]));
-    mux2x1  ins_04(.in0(y[4]), .in1(y[5]), .sel(ctrl[0]), .out(out[4]));
-    mux2x1  ins_03(.in0(y[3]), .in1(y[4]), .sel(ctrl[0]), .out(out[3]));
-    mux2x1  ins_02(.in0(y[2]), .in1(y[3]), .sel(ctrl[0]), .out(out[2]));
-    mux2x1  ins_01(.in0(y[1]), .in1(y[2]), .sel(ctrl[0]), .out(out[1]));
-    mux2x1  ins_00(.in0(y[0]), .in1(y[1]), .sel(ctrl[0]), .out(out[0]));
+    // Stage 2: Shift by 2 if ctrl[1] is set
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : SHIFT2
+            wire in0 = stage1[i];
+            wire in1;
+            assign in1 = (mode == 2'b00) ? ((i+2 < 8) ? stage1[i+2] : 1'b0) :
+                         (mode == 2'b01) ? ((i >= 2) ? stage1[i-2] : 1'b0) :
+                         (mode == 2'b10) ? ((i >= 2) ? stage1[i-2] : in[7]) :
+                         (mode == 2'b11) ? stage1[(i-2+8)%8] : 1'b0;
+            assign stage2[i] = ctrl[1] ? in1 : in0;
+        end
+    endgenerate
+
+    // Stage 3: Shift by 1 if ctrl[0] is set
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : SHIFT1
+            wire in0 = stage2[i];
+            wire in1;
+            assign in1 = (mode == 2'b00) ? ((i+1 < 8) ? stage2[i+1] : 1'b0) :
+                         (mode == 2'b01) ? ((i >= 1) ? stage2[i-1] : 1'b0) :
+                         (mode == 2'b10) ? ((i >= 1) ? stage2[i-1] : in[7]) :
+                         (mode == 2'b11) ? stage2[(i-1+8)%8] : 1'b0;
+            assign stage3[i] = ctrl[0] ? in1 : in0;
+        end
+    endgenerate
+
+    assign out = stage3;
 
 endmodule
 
